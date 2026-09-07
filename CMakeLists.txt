@@ -23,13 +23,23 @@ if(NOT EXISTS "${CMAKE_SOURCE_DIR}/compile_commands.json")
     )
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core DBus)
+find_package(Qt6 REQUIRED COMPONENTS Core DBus Widgets Gui Concurrent)
 
 add_executable(bluetooth-inspector
     src/main.cpp
     src/bluez_types.h
     src/bluez_object_manager.h
     src/bluez_object_manager.cpp
+    src/signal_strength_reader.h
+    src/signal_strength_reader.cpp
+    src/signal_strength_widget.h
+    src/signal_strength_widget.cpp
+    src/connected_device_card.h
+    src/connected_device_card.cpp
+    src/circular_battery_widget.h
+    src/circular_battery_widget.cpp
+    src/main_window.h
+    src/main_window.cpp
 )
 
 target_include_directories(bluetooth-inspector
@@ -41,4 +51,7 @@ target_link_libraries(bluetooth-inspector
     PRIVATE
         Qt6::Core
         Qt6::DBus
+        Qt6::Widgets
+        Qt6::Gui
+        Qt6::Concurrent
 )

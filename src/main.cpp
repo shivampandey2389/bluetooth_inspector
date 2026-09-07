@@ -1,9 +1,14 @@
+#include <QApplication>
 #include <QCoreApplication>
 #include <QDebug>
 #include <csignal>
-#include "bluez_object_manager.h"
+#include <iostream>
 
-int main(int argc, char *argv[])
+#include "main_window.h"
+#include "bluez_object_manager.h"
+#include "signal_strength_reader.h"
+
+int runCliMode(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
@@ -17,33 +22,11 @@ int main(int argc, char *argv[])
     });
 
     qInfo() << "========================================";
-    qInfo() << "      Bluetooth Inspector (BlueZ)       ";
+    qInfo() << "      Bluetooth Inspector (CLI Mode)    ";
     qInfo() << "========================================";
 
     BluezObjectManager manager;
-
-    QObject::connect(&manager, &BluezObjectManager::adapterAdded, [](const QDBusObjectPath &path, const QVariantMap &props) {
-        qInfo() << "[+] Adapter added:" << path.path()
-                << "Name:" << props.value("Name").toString()
-                << "Address:" << props.value("Address").toString();
-    });
-
-    QObject::connect(&manager, &BluezObjectManager::adapterRemoved, [](const QDBusObjectPath &path) {
-        qInfo() << "[-] Adapter removed:" << path.path();
-    });
-
-    QObject::connect(&manager, &BluezObjectManager::deviceAdded, [](const QDBusObjectPath &path, const QVariantMap &props) {
-        QString name = props.value("Name", props.value("Alias")).toString();
-        qInfo() << "[+] Device added:" << path.path()
-                << "Name:" << (name.isEmpty() ? "<Unknown>" : name)
-                << "Address:" << props.value("Address").toString()
-                << "Paired:" << props.value("Paired").toBool()
-                << "Connected:" << props.value("Connected").toBool();
-    });
-
-    QObject::connect(&manager, &BluezObjectManager::deviceRemoved, [](const QDBusObjectPath &path) {
-        qInfo() << "[-] Device removed:" << path.path();
-    });
+    SignalStrengthReader signalReader;
 
     if (!manager.initialize()) {
         qCritical() << "Failed to initialize BluezObjectManager.";
@@ -67,21 +50,75 @@ int main(int argc, char *argv[])
     qInfo() << "\nFound" << devices.size() << "Bluetooth Device(s):";
     for (const auto &devicePath : devices) {
         const auto props = manager.properties(devicePath, Bluez::DeviceInterface);
+        QString address = props.value("Address").toString();
         QString name = props.value("Name").toString();
-        if (name.isEmpty()) {
-            name = props.value("Alias").toString();
-        }
+        if (name.isEmpty()) name = props.value("Alias").toString();
+        bool connected = props.value("Connected").toBool();
+
         qInfo().noquote() << QString("  * Path: %1").arg(devicePath.path());
         qInfo().noquote() << QString("    Name: %1").arg(name.isEmpty() ? "<Unknown>" : name);
-        qInfo().noquote() << QString("    Address: %1").arg(props.value("Address").toString());
+        qInfo().noquote() << QString("    Address: %1").arg(address);
         qInfo().noquote() << QString("    Paired: %1").arg(props.value("Paired").toBool() ? "true" : "false");
-        qInfo().noquote() << QString("    Connected: %1").arg(props.value("Connected").toBool() ? "true" : "false");
+        qInfo().noquote() << QString("    Connected: %1").arg(connected ? "true" : "false");
+
+        // Battery
+        auto batteryOpt = manager.battery(devicePath);
+        if (batteryOpt.has_value() && batteryOpt->valid) {
+            QString batteryStr = QString("%1%").arg(batteryOpt->percentage);
+            if (!batteryOpt->source.isEmpty()) batteryStr += QString(" (Source: %1)").arg(batteryOpt->source);
+            if (!batteryOpt->state.isEmpty()) batteryStr += QString(" [%1]").arg(batteryOpt->state);
+            qInfo().noquote() << QString("    Battery: %1").arg(batteryStr);
+        } else {
+            qInfo().noquote() << QString("    Battery: N/A%1")
+                                     .arg(connected ? " (not reported)" : " (device disconnected)");
+        }
+
+        // Signal Strength / RSSI
+        int dbusRssi = props.value("RSSI").toInt();
+        SignalStrengthInfo sig = connected ? signalReader.readSignalStrength(address, dbusRssi)
+                                           : evaluateSignalStrength(dbusRssi);
+        if (sig.valid) {
+            qInfo().noquote() << QString("    RSSI: %1 dBm (%2) - %3").arg(sig.rssi).arg(sig.rating).arg(sig.description);
+        } else {
+            qInfo().noquote() << QString("    RSSI: N/A%1").arg(connected ? "" : " (device disconnected)");
+        }
     }
 
     if (app.arguments().contains("--oneshot") || app.arguments().contains("-1")) {
         return 0;
     }
 
-    qInfo() << "\nListening for Bluetooth events in real-time... (pass --oneshot to exit immediately, or press Ctrl+C to quit)\n";
+    qInfo() << "\nListening for Bluetooth events... (Press Ctrl+C to quit)\n";
+    return app.exec();
+}
+
+int main(int argc, char *argv[])
+{
+    // Check if CLI mode requested or if headless environment
+    bool cliMode = false;
+    for (int i = 1; i < argc; ++i) {
+        QString arg = argv[i];
+        if (arg == "--cli" || arg == "--oneshot" || arg == "-1") {
+            cliMode = true;
+            break;
+        }
+    }
+
+    if (qEnvironmentVariableIsEmpty("DISPLAY") && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+        cliMode = true;
+    }
+
+    if (cliMode) {
+        return runCliMode(argc, argv);
+    }
+
+    // Launch GUI Application
+    QApplication app(argc, argv);
+    app.setApplicationName("Bluetooth Inspector");
+    app.setApplicationDisplayName("Bluetooth Inspector");
+
+    MainWindow window;
+    window.show();
+
     return app.exec();
 }
