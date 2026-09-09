@@ -92,23 +92,41 @@ int runCliMode(int argc, char *argv[])
     return app.exec();
 }
 
+#include <QFile>
+
 int main(int argc, char *argv[])
 {
-    // Check if CLI mode requested or if headless environment
-    bool cliMode = false;
+    bool forceCli = false;
+    bool forceGui = false;
+
     for (int i = 1; i < argc; ++i) {
         QString arg = argv[i];
         if (arg == "--cli" || arg == "--oneshot" || arg == "-1") {
-            cliMode = true;
+            forceCli = true;
+            break;
+        }
+        if (arg == "--gui" || arg == "-g") {
+            forceGui = true;
             break;
         }
     }
 
-    if (qEnvironmentVariableIsEmpty("DISPLAY") && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
-        cliMode = true;
+    // If on a Linux desktop but DISPLAY was not exported in the subshell, auto-set DISPLAY
+    if (!forceCli && qEnvironmentVariableIsEmpty("DISPLAY") && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+        if (QFile::exists("/tmp/.X11-unix/X0")) {
+            qputenv("DISPLAY", ":0");
+        } else if (QFile::exists("/tmp/.X11-unix/X1")) {
+            qputenv("DISPLAY", ":1");
+        }
     }
 
-    if (cliMode) {
+    bool hasDisplay = !qEnvironmentVariableIsEmpty("DISPLAY") || !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY");
+
+    if (forceCli || (!forceGui && !hasDisplay)) {
+        if (!hasDisplay && !forceCli) {
+            std::cout << "[INFO] No display detected (DISPLAY/WAYLAND_DISPLAY unset). Running in CLI mode.\n"
+                      << "[INFO] To open the GUI, run in a desktop terminal with DISPLAY set or pass --gui.\n\n";
+        }
         return runCliMode(argc, argv);
     }
 
